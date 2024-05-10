@@ -6,12 +6,16 @@
 
 #include "mm.h"
 #include <stdlib.h>
+#include <stdio.h>
+#include <pthread.h>
 
 /*
  *  MEMPHY_mv_csr - move MEMPHY cursor
  *  @mp: memphy struct
  *  @offset: offset
  */
+pthread_mutex_t mem_lock = PTHREAD_MUTEX_INITIALIZER;
+
 int MEMPHY_mv_csr(struct memphy_struct *mp, int offset)
 {
    int numstep = 0;
@@ -61,7 +65,6 @@ int MEMPHY_read(struct memphy_struct * mp, int addr, BYTE *value)
       *value = mp->storage[addr];
    else /* Sequential access device */
       return MEMPHY_seq_read(mp, addr, value);
-
    return 0;
 }
 
@@ -76,7 +79,7 @@ int MEMPHY_seq_write(struct memphy_struct * mp, int addr, BYTE value)
 
    if (mp == NULL)
      return -1;
-
+   
    if (!mp->rdmflg)
      return -1; /* Not compatible mode for sequential read */
 
@@ -94,11 +97,13 @@ int MEMPHY_seq_write(struct memphy_struct * mp, int addr, BYTE value)
  */
 int MEMPHY_write(struct memphy_struct * mp, int addr, BYTE data)
 {
+   //add mutex lock for mem write?
    if (mp == NULL)
      return -1;
 
    if (mp->rdmflg)
       mp->storage[addr] = data;
+
    else /* Sequential access device */
       return MEMPHY_seq_write(mp, addr, data);
 
@@ -139,6 +144,7 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
 
 int MEMPHY_get_freefp(struct memphy_struct *mp, int *retfpn)
 {
+
    struct framephy_struct *fp = mp->free_fp_list;
 
    if (fp == NULL)
@@ -160,23 +166,59 @@ int MEMPHY_dump(struct memphy_struct * mp)
     /*TODO dump memphy contnt mp->storage 
      *     for tracing the memory content
      */
-
+   for(int i = 0; i<mp->maxsz; i++){
+      if(i%256==0) printf("\nFrame %d:\n", PAGING_PAGE_ALIGNSZ(i)/PAGING_PAGESZ);
+      if(i%64==0) printf("\n");
+      printf("%d ", (int)(mp->storage[i]));
+   }
+   printf("\n");
     return 0;
 }
 
 int MEMPHY_put_freefp(struct memphy_struct *mp, int fpn)
 {
-   struct framephy_struct *fp = mp->free_fp_list;
    struct framephy_struct *newnode = malloc(sizeof(struct framephy_struct));
 
-   /* Create new node with value fpn */
+   /* Create new node with value fpn */ //add to the front
    newnode->fpn = fpn;
-   newnode->fp_next = fp;
+   
+   if(mp->free_fp_list!=NULL){
+      newnode->fp_next = mp->free_fp_list;
+   }
    mp->free_fp_list = newnode;
 
    return 0;
 }
 
+//add modules to handle used frames in memphy_struct
+int MEMPHY_put_usedfp(struct memphy_struct *mp, int fpn)
+{
+   //create new node and add to used frame_list
+   struct framephy_struct *newnode = malloc(sizeof(struct framephy_struct));
+
+   newnode->fpn = fpn;
+   if(mp->used_fp_list!=NULL){
+      newnode->fp_next = mp->used_fp_list;
+   }
+   mp->used_fp_list = newnode;
+
+   return 0;
+}
+
+int MEMPHY_get_usedfp(struct memphy_struct *mp, int *retfpn)
+{
+   struct framephy_struct *fp = mp->used_fp_list;
+
+   if (fp == NULL)
+     return -1;
+
+   *retfpn = fp->fpn;
+   mp->used_fp_list = fp->fp_next;
+
+   free(fp);
+
+   return 0;
+}
 
 /*
  *  Init MEMPHY struct
